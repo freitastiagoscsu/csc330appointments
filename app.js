@@ -1,91 +1,130 @@
-// CSC330 – HW2 - Tiago Freitas
+// Tiago Freitas - Homework Assignment 3
+// app.js — CSC330 HW3 server
+// Run: node app.js  → open http://localhost:8080
 
-const http = require("http");
-const { URL } = require("url");
+const http = require('http');
+const fs   = require('fs');
+const url  = require('url');
+const path = require('path');
 
-const availableTimes = {
-  Monday:    ["9:00", "10:00", "11:00", "14:00", "15:00"],
-  Tuesday:   ["9:00", "10:00", "11:00", "14:00", "15:00"],
-  Wednesday: ["9:00", "10:00", "11:00", "14:00", "15:00"],
-  Thursday:  ["9:00", "10:00", "11:00", "14:00", "15:00"],
-  Friday:    ["9:00", "10:00", "11:00", "14:00", "15:00"],
-};
-const appointments = []; // { name, day, time }
+// In-memory appointment store 
+const appts = new Map(); // key: `${day}|${time}` → value: name
 
-// ----- Helpers -----
-function send(res, status, text) {
-  res.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
-  res.end(text + "\n");
+// Small helpers (avoid repetition) 
+function sendResponse(res, status, contentType, body) {
+  res.writeHead(status, { 'Content-Type': contentType });
+  res.end(body);
 }
-function reqd(q, keys) {
-  for (const k of keys) if (!q[k] || String(q[k]).trim() === "") return `Missing parameter: ${k}`;
-  return null;
-}
-function validDay(d) { return Object.prototype.hasOwnProperty.call(availableTimes, d); }
-const norm = (v) => String(v).trim();
 
-// ----- Route handlers -----
+function contentTypeFor(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const map = {
+    '.html': 'text/html; charset=utf-8',
+    '.css' : 'text/css; charset=utf-8',
+    '.js'  : 'application/javascript; charset=utf-8',
+    '.json': 'application/json; charset=utf-8',
+    '.png' : 'image/png',
+    '.jpg' : 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif' : 'image/gif',
+    '.svg' : 'image/svg+xml',
+    '.ico' : 'image/x-icon',
+    '.txt' : 'text/plain; charset=utf-8'
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+// Reads and serves a file from disk with proper content type + errors
+function sendFile(filePath, res) {
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      if (err.code === 'ENOENT') {
+        return sendResponse(res, 404, 'text/plain; charset=utf-8', '404 Not Found');
+      }
+      return sendResponse(res, 500, 'text/plain; charset=utf-8', '500 Internal Server Error');
+    }
+    sendResponse(res, 200, contentTypeFor(filePath), data);
+  });
+}
+
+// Route handlers 
 function handleSchedule(q, res) {
-  const err = reqd(q, ["name", "day", "time"]); if (err) return send(res, 400, err);
-  const name = norm(q.name), day = norm(q.day), time = norm(q.time);
-  if (!validDay(day)) return send(res, 400, "Invalid day");
-
-  const idx = availableTimes[day].indexOf(time);
-  if (idx !== -1) {
-    availableTimes[day].splice(idx, 1);
-    appointments.push({ name, day, time });
-    return send(res, 200, "reserved");            
+  const { name, day, time } = q;
+  if (!name || !day || !time) {
+    return sendResponse(res, 400, 'text/plain; charset=utf-8',
+      'Missing required query params: name, day, time');
   }
-  return send(res, 200, "not available");         
+  const key = `${day}|${time}`;
+  if (appts.has(key)) {
+    return sendResponse(res, 200, 'text/plain; charset=utf-8',
+      `Sorry, ${day} at ${time} is already booked by ${appts.get(key)}.`);
+  }
+  appts.set(key, name);
+  sendResponse(res, 200, 'text/plain; charset=utf-8',
+    `Scheduled ${name} on ${day} at ${time}.`);
 }
 
 function handleCancel(q, res) {
-  const err = reqd(q, ["name", "day", "time"]); if (err) return send(res, 400, err);
-  const name = norm(q.name), day = norm(q.day), time = norm(q.time);
-  if (!validDay(day)) return send(res, 400, "Invalid day");
-
-  const i = appointments.findIndex(a => a.name === name && a.day === day && a.time === time);
-  if (i === -1) return send(res, 200, "Appointment not found");
-
-  appointments.splice(i, 1);
-  if (!availableTimes[day].includes(time)) {
-    availableTimes[day].push(time);
-    availableTimes[day].sort((a,b) => a.localeCompare(b));
+  const { name, day, time } = q;
+  if (!name || !day || !time) {
+    return sendResponse(res, 400, 'text/plain; charset=utf-8',
+      'Missing required query params: name, day, time');
   }
-  return send(res, 200, "Appointment has been canceled");
+  const key = `${day}|${time}`;
+  if (!appts.has(key)) {
+    return sendResponse(res, 200, 'text/plain; charset=utf-8',
+      `No appointment found on ${day} at ${time}.`);
+  }
+  const who = appts.get(key);
+  if (who !== name) {
+    return sendResponse(res, 200, 'text/plain; charset=utf-8',
+      `Slot on ${day} at ${time} is owned by ${who}, not ${name}. Cancel denied.`);
+  }
+  appts.delete(key);
+  sendResponse(res, 200, 'text/plain; charset=utf-8',
+    `Cancelled ${name}'s appointment on ${day} at ${time}.`);
 }
 
 function handleCheck(q, res) {
-  const err = reqd(q, ["day", "time"]); if (err) return send(res, 400, err);
-  const day = norm(q.day), time = norm(q.time);
-  if (!validDay(day)) return send(res, 400, "Invalid day");
-
-  const free = availableTimes[day].includes(time);
-  return send(res, 200, free ? "available" : "not available");
+  const { day, time } = q;
+  if (!day || !time) {
+    return sendResponse(res, 400, 'text/plain; charset=utf-8',
+      'Missing required query params: day, time');
+  }
+  const key = `${day}|${time}`;
+  if (appts.has(key)) {
+    return sendResponse(res, 200, 'text/plain; charset=utf-8',
+      `NOT available. Booked by ${appts.get(key)}.`);
+  }
+  sendResponse(res, 200, 'text/plain; charset=utf-8',
+    `Available on ${day} at ${time}.`);
 }
 
-
+// HTTP server 
 const server = http.createServer((req, res) => {
-  try {
-    const u = new URL(req.url, `http://${req.headers.host}`);
-    const path = u.pathname;
-    const q = Object.fromEntries(u.searchParams.entries());
+  console.log('REQ:', req.method, req.url); // required: log incoming requests
 
-    console.log("REQ:", req.method, path, q);
+  const parsed = url.parse(req.url, true);
+  const pathname = parsed.pathname;
 
-    if (req.method !== "GET") return send(res, 405, "Method Not Allowed");
-    if ([...u.searchParams.keys()].length === 0) return send(res, 400, "Bad Request: missing query string");
-
-    switch (path) {
-      case "/schedule": return handleSchedule(q, res);
-      case "/cancel":   return handleCancel(q, res);
-      case "/check":    return handleCheck(q, res);
-      default:          return send(res, 404, "Unknown path. Try /schedule, /cancel, or /check");
-    }
-  } catch (e) {
-    console.error(e);
-    return send(res, 400, "Bad Request: malformed URL");
+  // AJAX endpoints
+  if (req.method === 'GET') {
+    if (pathname === '/schedule') return handleSchedule(parsed.query, res);
+    if (pathname === '/cancel')   return handleCancel(parsed.query, res);
+    if (pathname === '/check')    return handleCheck(parsed.query, res);
   }
+
+  // Static files from public_html (default "/" → index.html)
+  let safePath = pathname === '/' ? '/index.html' : pathname;
+
+  // prevent path traversal outside public_html
+  safePath = path.normalize(safePath).replace(/^(\.\.[/\\])+/, '');
+
+  const filePath = path.join(__dirname, 'public_html', safePath);
+  sendFile(filePath, res); // single place that serves files
 });
 
-server.listen(80, () => console.log("listening on port 80"));
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});

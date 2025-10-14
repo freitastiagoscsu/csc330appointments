@@ -1,0 +1,4 @@
+Q1
+---
+`..`  = parent directory  
+`-R`  = recursive copy (copies all subfolders/files)

@@ -1,0 +1,7 @@
+References and Collaboration
+-----------------------------
+Worked Alone
+- References:
+  * Used CSC330 HW3 assignment PDF
+  * Instructor’s schedulingInterfaceNoImages repo for UI files
+  
